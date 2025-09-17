@@ -42,6 +42,7 @@ current_quiz = 'Type the correct print statement in Python:'
 correct_answer = 'print("Hello World")'
 quiz_mode = False
 user_input = ""
+cursor_position = 0  # カーソル位置を管理
 
 base_bullet_interval = 0.5
 
@@ -58,6 +59,30 @@ attack_texts = ['print', 'Hello', 'World', '""', '()']
 normal_speed_multiplier = 1.5
 
 admin_invincible = False # 管理者モード（無敵）フラグ
+
+# 自動補完機能のための設定
+auto_complete_pairs = {
+    '(': ')',
+    '"': '"',
+    "'": "'"
+}
+
+def insert_character_at_cursor(text, char, cursor_pos):
+    """カーソル位置に文字を挿入"""
+    return text[:cursor_pos] + char + text[cursor_pos:]
+
+def handle_auto_complete(char, current_text, cursor_pos):
+    """自動補完処理"""
+    if char in auto_complete_pairs:
+        # 既存の閉じ括弧/引用符をスキップする場合
+        if cursor_pos < len(current_text) and current_text[cursor_pos] == auto_complete_pairs[char]:
+            return current_text, cursor_pos + 1
+        
+        # 新しい補完ペアを追加
+        new_text = insert_character_at_cursor(current_text, char + auto_complete_pairs[char], cursor_pos)
+        return new_text, cursor_pos + 1
+    
+    return insert_character_at_cursor(current_text, char, cursor_pos), cursor_pos + 1
 
 def game_over_screen(elapsed_time, final_correct_count):
     win.fill(BLACK)
@@ -148,9 +173,28 @@ def draw_game():
         pygame.draw.rect(win, BLACK, (50, 100, 540, 150))
         pygame.draw.rect(win, WHITE, (50, 100, 540, 150), 2)
         question_text = font.render(current_quiz, True, WHITE)
-        input_text = font.render(">> " + user_input, True, WHITE)
+        
+        # カーソル位置を考慮したテキスト表示
+        prompt = ">> "
+        left_part = user_input[:cursor_position]
+        right_part = user_input[cursor_position:]
+        
+        # テキストの幅を測定してカーソル位置を計算
+        prompt_width = font.size(prompt)[0]
+        left_width = font.size(left_part)[0] if left_part else 0
+        
+        input_text = font.render(prompt + user_input, True, WHITE)
         win.blit(question_text, (60, 120))
         win.blit(input_text, (60, 150))
+        
+        # カーソルを描画（点滅効果付き）
+        cursor_x = 60 + prompt_width + left_width
+        cursor_y = 150
+        cursor_height = font.get_height()
+        
+        # 点滅効果（1秒周期）
+        if int(time.time() * 2) % 2:  # 0.5秒ごとに点滅
+            pygame.draw.line(win, WHITE, (cursor_x, cursor_y), (cursor_x, cursor_y + cursor_height), 2)
 
     if incorrect_message and time.time() - incorrect_message_time < incorrect_message_duration:
         # 管理者モード有効化メッセージもここで表示される
@@ -167,7 +211,7 @@ def game_over_wrapper():
     game_over_screen(current_elapsed_time, correct_count)
 
 def handle_quiz_submission():
-    global quiz_mode, user_input, correct_count, admin_invincible # admin_invincible をグローバル宣言に追加
+    global quiz_mode, user_input, correct_count, admin_invincible, cursor_position # cursor_position を追加
     global incorrect_message, incorrect_message_time, last_quiz_time, next_quiz_interval
 
     # 管理者モードのチェックを最優先
@@ -175,6 +219,7 @@ def handle_quiz_submission():
         admin_invincible = True
         quiz_mode = False # クイズモードを終了
         user_input = ""   # 入力をクリア
+        cursor_position = 0  # カーソル位置もリセット
         incorrect_message = "Admin mode: Invincibility ON!" # フィードバックメッセージ
         incorrect_message_time = time.time()
         # 次のクイズを通常通りスケジュール
@@ -186,6 +231,7 @@ def handle_quiz_submission():
     if user_input.strip() == correct_answer:
         quiz_mode = False
         user_input = ""
+        cursor_position = 0  # カーソル位置もリセット
         correct_count += 1
         if correct_count == 6:
             current_elapsed_time = time.time() - start_time
@@ -198,6 +244,7 @@ def handle_quiz_submission():
         incorrect_message = "Incorrect answer! Try again."
         incorrect_message_time = time.time()
         user_input = ""
+        cursor_position = 0  # カーソル位置もリセット
         # quiz_mode は True のまま
 
 clock = pygame.time.Clock()
@@ -211,11 +258,25 @@ while True:
             sys.exit()
         if quiz_mode and event.type == pygame.KEYDOWN:
             if event.key == pygame.K_BACKSPACE:
-                user_input = user_input[:-1]
+                if cursor_position > 0:
+                    user_input = user_input[:cursor_position-1] + user_input[cursor_position:]
+                    cursor_position -= 1
+            elif event.key == pygame.K_DELETE:
+                if cursor_position < len(user_input):
+                    user_input = user_input[:cursor_position] + user_input[cursor_position+1:]
+            elif event.key == pygame.K_LEFT:
+                cursor_position = max(0, cursor_position - 1)
+            elif event.key == pygame.K_RIGHT:
+                cursor_position = min(len(user_input), cursor_position + 1)
+            elif event.key == pygame.K_HOME:
+                cursor_position = 0
+            elif event.key == pygame.K_END:
+                cursor_position = len(user_input)
             elif event.key == pygame.K_RETURN:
                 handle_quiz_submission() 
-            else:
-                user_input += event.unicode
+            elif event.unicode and event.unicode.isprintable():
+                # 自動補完機能を適用
+                user_input, cursor_position = handle_auto_complete(event.unicode, user_input, cursor_position)
 
     keys = pygame.key.get_pressed()
     if not quiz_mode:
@@ -231,6 +292,7 @@ while True:
     if not quiz_mode and time.time() - last_quiz_time > next_quiz_interval:
         quiz_mode = True
         user_input = ""
+        cursor_position = 0  # カーソル位置をリセット
         incorrect_message = "" # 新しいクイズ開始時にメッセージをクリア
 
     # --- Bullet Generation ---
