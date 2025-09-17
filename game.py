@@ -60,15 +60,21 @@ normal_speed_multiplier = 1.5
 
 admin_invincible = False # 管理者モード（無敵）フラグ
 
-# ステージ7用の円形攻撃システム
+# ステージ7用の四角形攻撃システム
 import math
-circular_attacks = []  # 円形攻撃の弾を管理するリスト
-circular_attack_phase = 0  # 0: 配置フェーズ, 1: 突進フェーズ
-circular_spawn_timer = 0
-circular_spawn_interval = 0.3  # 弾の出現間隔
-circular_radius = 150  # 円の半径
-circular_rush_timer = 0
-circular_rush_delay = 3.0  # 配置完了から突進開始までの時間
+square_attacks = []  # 四角形攻撃の弾を管理するリスト
+square_attack_phase = 0  # 0: 配置フェーズ, 1: 突進フェーズ, 2: 待機フェーズ, 3: 第2攻撃配置, 4: 第2攻撃中央突進
+square_spawn_timer = 0
+square_spawn_interval = 0.05  # 弾の出現間隔（高速化）
+square_margin = 5  # 画面端からのマージン（10→5にさらに縮小）
+square_rush_timer = 0
+square_rush_delay = 0.5  # 配置完了から突進開始までの時間（短縮）
+total_square_bullets = 60  # 配置する弾の総数（5倍: 12→60）
+second_attack_wait_time = 1.0  # 第1攻撃完了から第2攻撃開始までの待機時間
+second_attack_positions = []  # 第2攻撃の位置を保存するリスト
+stage7_question_delay = 2.0  # 第2攻撃配置完了から問題出題までの時間
+stage7_question_timer = 0  # 問題出題タイマー
+stage7_question_active = False  # Stage 7の問題出題制御フラグ
 
 # 自動補完機能のための設定
 auto_complete_pairs = {
@@ -96,17 +102,21 @@ def handle_auto_complete(char, current_text, cursor_pos):
 
 def reset_stage_systems():
     """すべての攻撃システムをリセット"""
-    global bullets, chaser, circular_attacks, circular_attack_phase, circular_spawn_timer, circular_rush_timer
+    global bullets, chaser, square_attacks, square_attack_phase, square_spawn_timer, square_rush_timer
+    global second_attack_positions, stage7_question_timer, stage7_question_active
     
     # 既存の攻撃をクリア
     bullets.clear()
     chaser = None
     
-    # 円形攻撃システムをリセット
-    circular_attacks.clear()
-    circular_attack_phase = 0
-    circular_spawn_timer = time.time()
-    circular_rush_timer = 0
+    # 四角形攻撃システムをリセット
+    square_attacks.clear()
+    square_attack_phase = 0
+    square_spawn_timer = time.time()
+    square_rush_timer = 0
+    second_attack_positions.clear()
+    stage7_question_timer = 0
+    stage7_question_active = False
 
 def jump_to_stage(stage_number):
     """指定されたステージにジャンプ"""
@@ -136,93 +146,179 @@ def jump_to_stage(stage_number):
     last_quiz_time = time.time()
     next_quiz_interval = random.uniform(quiz_interval_min, quiz_interval_max)
 
-def create_circular_attack(angle, attack_text):
-    """円形攻撃用の弾を作成"""
+def create_square_attack(spawn_order, attack_text):
+    """四角形攻撃用の弾を画面の四辺に配置"""
     center_x = WIDTH // 2
     center_y = HEIGHT // 2
     
-    # 円周上の位置を計算
-    x = center_x + circular_radius * math.cos(angle)
-    y = center_y + circular_radius * math.sin(angle)
+    # 四角形の周囲に60個の弾を配置
+    # 各辺に15個ずつ配置（上、右、下、左）
+    bullets_per_side = total_square_bullets // 4
+    side = spawn_order // bullets_per_side  # どの辺か（0:上, 1:右, 2:下, 3:左）
+    position_on_side = spawn_order % bullets_per_side  # 辺のどの位置か
+    
+    if side == 0:  # 上辺
+        pos_x = square_margin + (WIDTH - 2 * square_margin) * position_on_side / (bullets_per_side - 1)
+        pos_y = square_margin
+    elif side == 1:  # 右辺
+        pos_x = WIDTH - square_margin
+        pos_y = square_margin + (HEIGHT - 2 * square_margin) * position_on_side / (bullets_per_side - 1)
+    elif side == 2:  # 下辺
+        pos_x = WIDTH - square_margin - (WIDTH - 2 * square_margin) * position_on_side / (bullets_per_side - 1)
+        pos_y = HEIGHT - square_margin
+    else:  # 左辺
+        pos_x = square_margin
+        pos_y = HEIGHT - square_margin - (HEIGHT - 2 * square_margin) * position_on_side / (bullets_per_side - 1)
+    
+    # 中央への方向ベクトルを計算
+    dx = center_x - pos_x
+    dy = center_y - pos_y
+    distance = math.sqrt(dx**2 + dy**2)
+    dir_x = dx / distance
+    dir_y = dy / distance
     
     return {
-        "rect": pygame.Rect(int(x), int(y), 1, 1),
+        "rect": pygame.Rect(int(pos_x), int(pos_y), 1, 1),
         "text": attack_text,
-        "pos_x_float": float(x),
-        "pos_y_float": float(y),
-        "target_x": center_x,
-        "target_y": center_y,
-        "angle": angle,
-        "phase": "positioned",  # "positioned" または "rushing"
-        "rush_speed": 2.0,
-        "spawn_order": len(circular_attacks)  # 出現順序を記録
+        "pos_x_float": float(pos_x),
+        "pos_y_float": float(pos_y),
+        "center_x": center_x,
+        "center_y": center_y,
+        "dir_x": dir_x,
+        "dir_y": dir_y,
+        "side": side,
+        "phase": "positioned",  # "positioned", "rushing"
+        "rush_speed": 8.0,  # 突進速度
+        "spawn_order": spawn_order
     }
 
-def update_circular_attacks():
-    """円形攻撃システムの更新"""
-    global circular_attack_phase, circular_spawn_timer, circular_rush_timer
+def update_square_attacks():
+    """四角形攻撃システムの更新"""
+    global square_attack_phase, square_spawn_timer, square_rush_timer
+    global stage7_question_timer, stage7_question_active
     
     if correct_count != 6:  # ステージ7のみ
         return
     
     current_time = time.time()
     
-    # フェーズ0: 弾の配置
-    if circular_attack_phase == 0:
-        if current_time - circular_spawn_timer > circular_spawn_interval:
-            circular_spawn_timer = current_time
+    # フェーズ0: 弾の瞬間出現
+    if square_attack_phase == 0:
+        if current_time - square_spawn_timer > square_spawn_interval:
+            square_spawn_timer = current_time
             
-            # 12個の弾を円形に配置
-            if len(circular_attacks) < 12:
-                angle = (len(circular_attacks) * 2 * math.pi) / 12
+            # 60個の弾を順次生成（瞬間出現）
+            if len(square_attacks) < total_square_bullets:
                 attack_text = random.choice(attack_texts)
-                circular_attacks.append(create_circular_attack(angle, attack_text))
+                square_attacks.append(create_square_attack(len(square_attacks), attack_text))
             
-            # 配置完了
-            if len(circular_attacks) >= 12:
-                circular_attack_phase = 1
-                circular_rush_timer = current_time
+            # 全ての弾の出現完了
+            if len(square_attacks) >= total_square_bullets:
+                square_attack_phase = 1
+                square_rush_timer = current_time
     
-    # フェーズ1: 突進攻撃
-    elif circular_attack_phase == 1:
-        if current_time - circular_rush_timer > circular_rush_delay:
-            # 出現順に突進開始
-            for attack in circular_attacks:
+    # フェーズ1: 順次突進攻撃
+    elif square_attack_phase == 1:
+        if current_time - square_rush_timer > square_rush_delay:
+            # 配置した順番に突進開始
+            for attack in square_attacks:
                 if attack["phase"] == "positioned":
-                    rush_delay = attack["spawn_order"] * 0.2  # 0.2秒間隔で突進
-                    if current_time - circular_rush_timer - circular_rush_delay > rush_delay:
+                    rush_delay = attack["spawn_order"] * 0.03  # 0.03秒間隔で高速突進
+                    if current_time - square_rush_timer - square_rush_delay > rush_delay:
                         attack["phase"] = "rushing"
+        
+        # 全ての弾が画面外に出たかチェック
+        if len(square_attacks) == 0:  # 全ての弾が削除された
+            square_attack_phase = 2
+            square_rush_timer = current_time  # 待機時間の開始
+    
+    # フェーズ2: 第2攻撃前の待機
+    elif square_attack_phase == 2:
+        if current_time - square_rush_timer > second_attack_wait_time:
+            square_attack_phase = 3
+            square_spawn_timer = current_time
+            # 第2攻撃用の位置を記録
+            second_attack_positions.clear()
+    
+    # フェーズ3: 第2攻撃の配置（同じ位置）
+    elif square_attack_phase == 3:
+        if current_time - square_spawn_timer > square_spawn_interval:
+            square_spawn_timer = current_time
+            
+            # 60個の弾を同じ位置に再配置
+            if len(square_attacks) < total_square_bullets:
+                attack_text = random.choice(attack_texts)
+                new_attack = create_square_attack(len(square_attacks), attack_text)
+                # 元の位置情報を保存
+                second_attack_positions.append({
+                    "original_x": new_attack["pos_x_float"],
+                    "original_y": new_attack["pos_y_float"]
+                })
+                square_attacks.append(new_attack)
+            
+            # 全ての弾の配置完了
+            if len(square_attacks) >= total_square_bullets:
+                square_attack_phase = 4
+                square_rush_timer = current_time
+                # Stage 7専用: 問題出題タイマー開始
+                stage7_question_timer = current_time
+                stage7_question_active = False  # まだ問題は出題しない
+    
+    # フェーズ4: 第2攻撃 - ゆっくり中央に向かう攻撃
+    elif square_attack_phase == 4:
+        if current_time - square_rush_timer > square_rush_delay:
+            # 全ての弾が同時に中央に向かって移動開始
+            for attack in square_attacks:
+                if attack["phase"] == "positioned":
+                    attack["phase"] = "slow_center_rush"
+                    attack["slow_rush_speed"] = attack["rush_speed"] / 20.0  # 1/10 → 1/20の速度（さらに半分）
     
     # 弾の移動処理
-    for attack in circular_attacks[:]:
+    for attack in square_attacks[:]:
         if attack["phase"] == "rushing":
-            # 中央に向かって移動
-            dx = attack["target_x"] - attack["pos_x_float"]
-            dy = attack["target_y"] - attack["pos_y_float"]
-            distance = max(1, math.sqrt(dx**2 + dy**2))
-            
-            # 正規化して速度を適用
-            move_x = (dx / distance) * attack["rush_speed"]
-            move_y = (dy / distance) * attack["rush_speed"]
-            
-            attack["pos_x_float"] += move_x
-            attack["pos_y_float"] += move_y
+            # 第1攻撃: 中央を通って反対側に突き抜ける（高速）
+            attack["pos_x_float"] += attack["dir_x"] * attack["rush_speed"]
+            attack["pos_y_float"] += attack["dir_y"] * attack["rush_speed"]
             attack["rect"].x = int(attack["pos_x_float"])
             attack["rect"].y = int(attack["pos_y_float"])
             
             # 画面外に出た弾を削除
-            if (attack["rect"].x < -50 or attack["rect"].x > WIDTH + 50 or 
-                attack["rect"].y < -50 or attack["rect"].y > HEIGHT + 50):
-                circular_attacks.remove(attack)
+            if (attack["rect"].x < -100 or attack["rect"].x > WIDTH + 100 or 
+                attack["rect"].y < -100 or attack["rect"].y > HEIGHT + 100):
+                square_attacks.remove(attack)
+        
+        elif attack["phase"] == "slow_center_rush":
+            # 第2攻撃: ゆっくりと中央に向かう
+            center_x = WIDTH // 2
+            center_y = HEIGHT // 2
+            
+            # 中央に向かう方向を計算
+            dx = center_x - attack["pos_x_float"]
+            dy = center_y - attack["pos_y_float"]
+            distance = math.sqrt(dx*dx + dy*dy)
+            
+            if distance > 1:  # 中央に到達していない
+                # 正規化した方向ベクトル × ゆっくりとした速度
+                move_x = (dx / distance) * attack["slow_rush_speed"]
+                move_y = (dy / distance) * attack["slow_rush_speed"]
+                
+                attack["pos_x_float"] += move_x
+                attack["pos_y_float"] += move_y
+                attack["rect"].x = int(attack["pos_x_float"])
+                attack["rect"].y = int(attack["pos_y_float"])
+            else:
+                # 中央に到達したら削除
+                square_attacks.remove(attack)
         
         # 衝突判定
-        temp_text_surface = font.render(attack["text"], True, BLACK)
-        text_w = temp_text_surface.get_width()
-        text_h = temp_text_surface.get_height()
-        text_actual_rect = pygame.Rect(attack["rect"].x, attack["rect"].y - 15, text_w, text_h)
-        
-        if player.colliderect(text_actual_rect) and not admin_invincible:
-            game_over_wrapper()
+        if attack["phase"] in ["positioned", "rushing", "slow_center_rush"]:
+            temp_text_surface = font.render(attack["text"], True, BLACK)
+            text_w = temp_text_surface.get_width()
+            text_h = temp_text_surface.get_height()
+            text_actual_rect = pygame.Rect(attack["rect"].x, attack["rect"].y - 15, text_w, text_h)
+            
+            if player.colliderect(text_actual_rect) and not admin_invincible:
+                game_over_wrapper()
 
 def game_over_screen(elapsed_time, final_correct_count):
     win.fill(BLACK)
@@ -275,6 +371,7 @@ def game_clear_screen(elapsed_time, final_correct_count):
 
 def draw_game():
     global rainbow_idx_shifter, admin_invincible # admin_invincible を参照
+    global stage7_question_timer, stage7_question_active  # Stage 7問題出題制御変数
     win.fill(BLACK)
     
     player_color_to_draw = WHITE
@@ -300,14 +397,14 @@ def draw_game():
         text_surface = font.render(bullet_item["text"], True, bullet_color_to_use)
         win.blit(text_surface, (bullet_item["rect"].x, bullet_item["rect"].y - 15))
 
-    # 円形攻撃の描画
+    # 四角形攻撃の描画
     if correct_count == 6:  # ステージ7
-        for attack in circular_attacks:
+        for attack in square_attacks:
             if attack["phase"] == "positioned":
-                # 配置中の弾は薄い色で表示
-                attack_color = (150, 150, 255)
+                # 配置完了時は黄色で表示
+                attack_color = (255, 255, 100)
             else:
-                # 突進中の弾は明るい色で表示
+                # 突進中は明るい赤色で表示
                 attack_color = (255, 100, 100)
             
             text_surface = font.render(attack["text"], True, attack_color)
@@ -326,31 +423,42 @@ def draw_game():
     win.blit(stage_text_render, (WIDTH - 140, 50))
 
     if quiz_mode:
-        pygame.draw.rect(win, BLACK, (50, 100, 540, 150))
-        pygame.draw.rect(win, WHITE, (50, 100, 540, 150), 2)
-        question_text = font.render(current_quiz, True, WHITE)
+        # Stage 7専用: 問題出題タイミング制御
+        show_quiz = True
+        if correct_count == 6:  # Stage 7の場合
+            if stage7_question_timer > 0:  # タイマーが設定されている
+                current_time = time.time()
+                if current_time - stage7_question_timer < stage7_question_delay:
+                    show_quiz = False  # まだ2秒経っていないので問題を表示しない
+                elif not stage7_question_active:
+                    stage7_question_active = True  # 2秒経ったので問題表示開始
         
-        # カーソル位置を考慮したテキスト表示
-        prompt = ">> "
-        left_part = user_input[:cursor_position]
-        right_part = user_input[cursor_position:]
-        
-        # テキストの幅を測定してカーソル位置を計算
-        prompt_width = font.size(prompt)[0]
-        left_width = font.size(left_part)[0] if left_part else 0
-        
-        input_text = font.render(prompt + user_input, True, WHITE)
-        win.blit(question_text, (60, 120))
-        win.blit(input_text, (60, 150))
-        
-        # カーソルを描画（点滅効果付き）
-        cursor_x = 60 + prompt_width + left_width
-        cursor_y = 150
-        cursor_height = font.get_height()
-        
-        # 点滅効果（1秒周期）
-        if int(time.time() * 2) % 2:  # 0.5秒ごとに点滅
-            pygame.draw.line(win, WHITE, (cursor_x, cursor_y), (cursor_x, cursor_y + cursor_height), 2)
+        if show_quiz:
+            pygame.draw.rect(win, BLACK, (50, 100, 540, 150))
+            pygame.draw.rect(win, WHITE, (50, 100, 540, 150), 2)
+            question_text = font.render(current_quiz, True, WHITE)
+            
+            # カーソル位置を考慮したテキスト表示
+            prompt = ">> "
+            left_part = user_input[:cursor_position]
+            right_part = user_input[cursor_position:]
+            
+            # テキストの幅を測定してカーソル位置を計算
+            prompt_width = font.size(prompt)[0]
+            left_width = font.size(left_part)[0] if left_part else 0
+            
+            input_text = font.render(prompt + user_input, True, WHITE)
+            win.blit(question_text, (60, 120))
+            win.blit(input_text, (60, 150))
+            
+            # カーソルを描画（点滅効果付き）
+            cursor_x = 60 + prompt_width + left_width
+            cursor_y = 150
+            cursor_height = font.get_height()
+            
+            # 点滅効果（1秒周期）
+            if int(time.time() * 2) % 2:  # 0.5秒ごとに点滅
+                pygame.draw.line(win, WHITE, (cursor_x, cursor_y), (cursor_x, cursor_y + cursor_height), 2)
 
     if incorrect_message and time.time() - incorrect_message_time < incorrect_message_duration:
         # 管理者モード有効化メッセージもここで表示される
@@ -537,9 +645,9 @@ while True:
                     "direction": chosen_direction
                 })
     
-    # ステージ7の円形攻撃システム
+    # ステージ7の四角形攻撃システム
     if correct_count == 6:
-        update_circular_attacks()
+        update_square_attacks()
 
     # --- Bullet Movement and Collision ---
     # ステージ7では既存の弾システムを停止
