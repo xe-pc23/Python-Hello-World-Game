@@ -60,21 +60,29 @@ normal_speed_multiplier = 1.5
 
 admin_invincible = False # 管理者モード（無敵）フラグ
 
-# ステージ7用の四角形攻撃システム
+# ステージ4用の3段階攻撃システム
 import math
 square_attacks = []  # 四角形攻撃の弾を管理するリスト
-square_attack_phase = 0  # 0: 配置フェーズ, 1: 突進フェーズ, 2: 待機フェーズ, 3: 第2攻撃配置, 4: 第2攻撃中央突進
+square_attack_phase = 0  # 0: 配置フェーズ, 1: 突進フェーズ, 2: 待機フェーズ, 3: 第2攻撃(上部攻撃), 4: 第3攻撃(元の第4攻撃)
 square_spawn_timer = 0
-square_spawn_interval = 0.05  # 弾の出現間隔（高速化）
+square_spawn_interval = 0.025  # 弾の出現間隔（高速配置）
 square_margin = 5  # 画面端からのマージン（10→5にさらに縮小）
 square_rush_timer = 0
 square_rush_delay = 0.5  # 配置完了から突進開始までの時間（短縮）
-total_square_bullets = 60  # 配置する弾の総数（5倍: 12→60）
+total_square_bullets = 64  # 配置する弾の総数（64個）
 second_attack_wait_time = 1.0  # 第1攻撃完了から第2攻撃開始までの待機時間
 second_attack_positions = []  # 第2攻撃の位置を保存するリスト
-stage7_question_delay = 2.0  # 第2攻撃配置完了から問題出題までの時間
-stage7_question_timer = 0  # 問題出題タイマー
-stage7_question_active = False  # Stage 7の問題出題制御フラグ
+stage4_question_delay = 2.0  # 上部攻撃終了から問題出題までの時間
+stage4_question_timer = 0  # 問題出題タイマー
+stage4_question_active = False  # Stage 4の問題出題制御フラグ
+top_attacks_finished_time = 0  # 上部攻撃が完全に終了した時刻
+
+# 第2段階攻撃（上部攻撃）用変数
+top_line_attacks = []  # 上部攻撃の弾を管理するリスト
+top_attack_spawn_timer = 0
+top_attack_spawn_duration = 7.0  # 7秒間文字生成
+top_attack_wait_duration = 3.0  # 3秒後に突進開始
+top_attack_generation_active = False  # 文字生成フラグ
 
 # 自動補完機能のための設定
 auto_complete_pairs = {
@@ -103,7 +111,8 @@ def handle_auto_complete(char, current_text, cursor_pos):
 def reset_stage_systems():
     """すべての攻撃システムをリセット"""
     global bullets, chaser, square_attacks, square_attack_phase, square_spawn_timer, square_rush_timer
-    global second_attack_positions, stage7_question_timer, stage7_question_active
+    global second_attack_positions, stage4_question_timer, stage4_question_active, top_attacks_finished_time
+    global top_line_attacks, top_attack_spawn_timer, top_attack_generation_active
     
     # 既存の攻撃をクリア
     bullets.clear()
@@ -115,8 +124,11 @@ def reset_stage_systems():
     square_spawn_timer = time.time()
     square_rush_timer = 0
     second_attack_positions.clear()
-    stage7_question_timer = 0
-    stage7_question_active = False
+    stage4_question_timer = 0
+    stage4_question_active = False
+    top_attacks_finished_time = 0
+    top_line_attacks.clear()
+    top_attack_generation_active = False
 
 def jump_to_stage(stage_number):
     """指定されたステージにジャンプ"""
@@ -195,24 +207,25 @@ def create_square_attack(spawn_order, attack_text):
 def update_square_attacks():
     """四角形攻撃システムの更新"""
     global square_attack_phase, square_spawn_timer, square_rush_timer
-    global stage7_question_timer, stage7_question_active
+    global stage4_question_timer, stage4_question_active, top_attacks_finished_time
+    global top_line_attacks, top_attack_spawn_timer, top_attack_generation_active
     
     if correct_count != 3:  # 新Stage 4のみ
         return
     
     current_time = time.time()
     
-    # フェーズ0: 弾の瞬間出現
+    # フェーズ0: 弾の順次配置（右端から四角を描くように）
     if square_attack_phase == 0:
         if current_time - square_spawn_timer > square_spawn_interval:
             square_spawn_timer = current_time
             
-            # 60個の弾を順次生成（瞬間出現）
+            # 12個の弾を右端から順次配置
             if len(square_attacks) < total_square_bullets:
                 attack_text = random.choice(attack_texts)
                 square_attacks.append(create_square_attack(len(square_attacks), attack_text))
             
-            # 全ての弾の出現完了
+            # 全ての弾の配置完了
             if len(square_attacks) >= total_square_bullets:
                 square_attack_phase = 1
                 square_rush_timer = current_time
@@ -240,8 +253,81 @@ def update_square_attacks():
             # 第2攻撃用の位置を記録
             second_attack_positions.clear()
     
-    # フェーズ3: 第2攻撃の配置（同じ位置）
+    # フェーズ3: 第2攻撃 - 上部攻撃システム + 第3段階用弾の段階的事前配置
     elif square_attack_phase == 3:
+        if not top_attack_generation_active:
+            # 上部攻撃開始
+            top_attack_generation_active = True
+            top_attack_spawn_timer = current_time
+            
+            # 第3段階用の弾配置の準備（段階的に配置するため初回はクリアのみ）
+            square_attacks.clear()  # 既存の弾をクリア
+            second_attack_positions.clear()
+        
+        # 段階的な事前配置と上部攻撃の同時実行
+        if top_attack_generation_active:
+            generation_elapsed = current_time - top_attack_spawn_timer
+            
+            # 第3段階用弾の段階的配置（右端から順番に、0.05秒間隔で配置）
+            target_pre_bullets = min(total_square_bullets, int(generation_elapsed / 0.05))
+            while len(square_attacks) < target_pre_bullets:
+                i = len(square_attacks)
+                attack_text = random.choice(attack_texts)
+                new_attack = create_square_attack(i, attack_text)
+                # 弾を放置状態に設定
+                new_attack["phase"] = "pre_positioned"  # 事前配置状態
+                # 元の位置情報を保存
+                second_attack_positions.append({
+                    "original_x": new_attack["pos_x_float"],
+                    "original_y": new_attack["pos_y_float"]
+                })
+                square_attacks.append(new_attack)
+            
+            # 上部攻撃の文字生成（0.1秒間隔 - 速度4倍）
+            if generation_elapsed < top_attack_spawn_duration:
+                if len(top_line_attacks) == 0 or current_time - top_line_attacks[-1].get("spawn_time", 0) > 0.1:
+                    attack_text = random.choice(attack_texts)
+                    x_pos = random.randint(50, WIDTH - 100)  # ランダムな横位置
+                    y_pos = 20  # 画面上部ギリギリに変更（80→20）
+                    
+                    top_line_attacks.append({
+                        "rect": pygame.Rect(x_pos, y_pos, 1, 1),
+                        "text": attack_text,
+                        "pos_x_float": float(x_pos),
+                        "pos_y_float": float(y_pos),  # Y座標を20で固定
+                        "phase": "waiting",  # "waiting", "rushing"
+                        "spawn_time": current_time,
+                        "individual_drop_time": current_time + 3.0  # 個別の落下開始時刻
+                    })
+            
+            # 7秒経過後、事前配置した弾を使用して第3段階へ移行
+            elif generation_elapsed >= top_attack_spawn_duration:
+                square_attack_phase = 4  # 第3攻撃へ直接移行
+                square_rush_timer = current_time
+                # 事前配置していた弾を第3段階用に変更
+                for attack in square_attacks:
+                    if attack["phase"] == "pre_positioned":
+                        attack["phase"] = "positioned"  # 第3段階で使用可能状態に変更
+                # 問題出題タイマーはまだ設定しない（上部攻撃終了後に設定）
+                stage4_question_active = False
+    
+    # フェーズ4: 第3攻撃 - 事前配置した弾を使用
+    elif square_attack_phase == 4:
+        # 事前配置された弾がすでに存在するので、即座に第5段階（ラッシュ攻撃）へ移行
+        square_attack_phase = 5
+        square_rush_timer = current_time
+    
+    # フェーズ5: 第3攻撃 - ゆっくり中央に向かう攻撃
+    elif square_attack_phase == 5:
+        if current_time - square_rush_timer > square_rush_delay:
+            # 全ての弾が同時に中央に向かって移動開始
+            for attack in square_attacks:
+                if attack["phase"] == "positioned":
+                    attack["phase"] = "slow_center_rush"
+                    attack["slow_rush_speed"] = attack["rush_speed"] / 25.0  # 1/25の速度（20%高速化）
+    
+    # フェーズ5: 第4攻撃の配置（元の第2攻撃システム）
+    elif square_attack_phase == 5:
         if current_time - square_spawn_timer > square_spawn_interval:
             square_spawn_timer = current_time
             
@@ -258,20 +344,53 @@ def update_square_attacks():
             
             # 全ての弾の配置完了
             if len(square_attacks) >= total_square_bullets:
-                square_attack_phase = 4
+                square_attack_phase = 6
                 square_rush_timer = current_time
-                # Stage 7専用: 問題出題タイマー開始
-                stage7_question_timer = current_time
-                stage7_question_active = False  # まだ問題は出題しない
+                # Stage 4専用: 問題出題タイマー開始
+                stage4_question_timer = current_time
+                stage4_question_active = False  # まだ問題は出題しない
     
-    # フェーズ4: 第2攻撃 - ゆっくり中央に向かう攻撃
-    elif square_attack_phase == 4:
-        if current_time - square_rush_timer > square_rush_delay:
-            # 全ての弾が同時に中央に向かって移動開始
-            for attack in square_attacks:
-                if attack["phase"] == "positioned":
-                    attack["phase"] = "slow_center_rush"
-                    attack["slow_rush_speed"] = attack["rush_speed"] / 20.0  # 1/10 → 1/20の速度（さらに半分）
+    # 上部攻撃の移動処理
+    for attack in top_line_attacks[:]:
+        # 個別の3秒後落下チェック
+        if attack["phase"] == "waiting":
+            if current_time >= attack["individual_drop_time"]:
+                attack["phase"] = "rushing"
+                attack["rush_speed"] = 6.0
+        
+        if attack["phase"] == "rushing":
+            attack["pos_y_float"] += attack["rush_speed"]
+            attack["rect"].y = int(attack["pos_y_float"])
+            
+            # 画面外に出た弾を削除
+            if attack["rect"].y > HEIGHT + 50:
+                top_line_attacks.remove(attack)
+        
+        # 上部攻撃の衝突判定
+        if attack["phase"] in ["waiting", "rushing"]:
+            temp_text_surface = font.render(attack["text"], True, BLACK)
+            text_w = temp_text_surface.get_width()
+            text_h = temp_text_surface.get_height()
+            text_actual_rect = pygame.Rect(attack["rect"].x, attack["rect"].y - 15, text_w, text_h)
+            
+            if player.colliderect(text_actual_rect) and not admin_invincible:
+                game_over_wrapper()
+    
+    # Stage 4で上部攻撃が完全に終了したかチェックし、問題出題タイマーを設定
+    if correct_count == 3 and len(top_line_attacks) == 0 and top_attacks_finished_time == 0 and top_attack_generation_active:
+        # 上部攻撃が完全に終了した時刻を記録
+        top_attacks_finished_time = current_time
+        stage4_question_timer = current_time  # 問題出題タイマー開始
+    
+    # Stage 4で2秒経過後に問題出題を有効化
+    if correct_count == 3 and stage4_question_timer > 0 and not stage4_question_active:
+        if current_time - stage4_question_timer >= stage4_question_delay:
+            stage4_question_active = True  # 2秒経ったので問題表示開始
+            # 問題出題開始時に入力をクリア（移動キーの影響を除去）
+            user_input = ""
+            cursor_position = 0
+            # キーイベントバッファもクリア
+            pygame.event.clear(pygame.KEYDOWN)
     
     # 弾の移動処理
     for attack in square_attacks[:]:
@@ -371,7 +490,9 @@ def game_clear_screen(elapsed_time, final_correct_count):
 
 def draw_game():
     global rainbow_idx_shifter, admin_invincible # admin_invincible を参照
-    global stage7_question_timer, stage7_question_active  # Stage 7問題出題制御変数
+    global stage4_question_timer, stage4_question_active  # Stage 4問題出題制御変数
+    global square_attack_phase  # 攻撃段階チェック用
+    global user_input, cursor_position  # クイズ入力関連変数
     win.fill(BLACK)
     
     player_color_to_draw = WHITE
@@ -397,13 +518,29 @@ def draw_game():
 
     # 四角形攻撃の描画
     if correct_count == 3:  # 新Stage 4 (旧Stage 7): Final Boss
+        # 四角形攻撃の描画
         for attack in square_attacks:
             if attack["phase"] == "positioned":
                 # 配置完了時は黄色で表示
                 attack_color = (255, 255, 100)
+            elif attack["phase"] == "pre_positioned":
+                # 事前配置時は明るい紫色で表示（上部攻撃と区別）
+                attack_color = (200, 100, 255)
             else:
                 # 突進中は明るい赤色で表示
                 attack_color = (255, 100, 100)
+            
+            text_surface = font.render(attack["text"], True, attack_color)
+            win.blit(text_surface, (attack["rect"].x, attack["rect"].y - 15))
+        
+        # 上部攻撃の描画
+        for attack in top_line_attacks:
+            if attack["phase"] == "waiting":
+                # 待機中は青色で表示（事前配置と区別するため）
+                attack_color = (100, 200, 255)
+            else:
+                # 突進中は明るい緑色で表示
+                attack_color = (150, 255, 150)
             
             text_surface = font.render(attack["text"], True, attack_color)
             win.blit(text_surface, (attack["rect"].x, attack["rect"].y - 15))
@@ -421,15 +558,11 @@ def draw_game():
     win.blit(stage_text_render, (WIDTH - 140, 50))
 
     if quiz_mode:
-        # Stage 4専用: 問題出題タイミング制御
+        # Stage 4専用: 問題出題タイミング制御（上部攻撃終了後）
         show_quiz = True
         if correct_count == 3:  # Stage 4（Final Boss）の場合
-            if stage7_question_timer > 0:  # タイマーが設定されている
-                current_time = time.time()
-                if current_time - stage7_question_timer < stage7_question_delay:
-                    show_quiz = False  # まだ2秒経っていないので問題を表示しない
-                elif not stage7_question_active:
-                    stage7_question_active = True  # 2秒経ったので問題表示開始
+            # stage4_question_activeがTrueの場合のみ問題を表示
+            show_quiz = stage4_question_active
         
         if show_quiz:
             pygame.draw.rect(win, BLACK, (50, 100, 540, 150))
@@ -554,9 +687,10 @@ while True:
             elif event.key == pygame.K_DELETE:
                 if cursor_position < len(user_input):
                     user_input = user_input[:cursor_position] + user_input[cursor_position+1:]
-            elif event.key == pygame.K_LEFT:
+            # カーソル移動はCtrl+矢印キーで操作（プレイヤー移動と競合を避ける）
+            elif event.key == pygame.K_LEFT and pygame.key.get_pressed()[pygame.K_LCTRL]:
                 cursor_position = max(0, cursor_position - 1)
-            elif event.key == pygame.K_RIGHT:
+            elif event.key == pygame.K_RIGHT and pygame.key.get_pressed()[pygame.K_LCTRL]:
                 cursor_position = min(len(user_input), cursor_position + 1)
             elif event.key == pygame.K_HOME:
                 cursor_position = 0
@@ -565,11 +699,14 @@ while True:
             elif event.key == pygame.K_RETURN:
                 handle_quiz_submission() 
             elif event.unicode and event.unicode.isprintable():
-                # 自動補完機能を適用
-                user_input, cursor_position = handle_auto_complete(event.unicode, user_input, cursor_position)
+                # 矢印キーのみ除外、WASDは全ステージで入力可能
+                if event.key not in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
+                    # 自動補完機能を適用
+                    user_input, cursor_position = handle_auto_complete(event.unicode, user_input, cursor_position)
 
     keys = pygame.key.get_pressed()
-    if not quiz_mode:
+    # プレイヤー移動：全ステージでクイズ中は移動不可
+    if not quiz_mode:  # クイズ中でない場合のみ移動可能
         if (keys[pygame.K_LEFT] or keys[pygame.K_a]) and player.left > 0:
             player.move_ip(-player_speed, 0)
         if (keys[pygame.K_RIGHT] or keys[pygame.K_d]) and player.right < WIDTH:
@@ -579,11 +716,20 @@ while True:
         if (keys[pygame.K_DOWN] or keys[pygame.K_s]) and player.bottom < HEIGHT:
             player.move_ip(0, player_speed)
 
-    if not quiz_mode and time.time() - last_quiz_time > next_quiz_interval:
+    # 通常のクイズモード開始（Stage 4以外）
+    if not quiz_mode and correct_count != 3 and time.time() - last_quiz_time > next_quiz_interval:
         quiz_mode = True
         user_input = ""
         cursor_position = 0  # カーソル位置をリセット
         incorrect_message = "" # 新しいクイズ開始時にメッセージをクリア
+        # キーイベントバッファをクリア（移動キーの残存を防ぐ）
+        pygame.event.clear(pygame.KEYDOWN)
+    
+    # Stage 4専用のクイズモード制御
+    if correct_count == 3 and stage4_question_active and not quiz_mode:
+        quiz_mode = True
+        user_input = ""
+        cursor_position = 0
 
     # --- Bullet Generation ---
     # ステージ7では既存の攻撃を停止
