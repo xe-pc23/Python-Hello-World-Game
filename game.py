@@ -124,7 +124,7 @@ def jump_to_stage(stage_number):
     global incorrect_message, incorrect_message_time, last_quiz_time, next_quiz_interval
     
     # ステージ番号を correct_count に変換 (ステージ1 = correct_count 0)
-    target_correct_count = max(0, min(stage_number - 1, 6))
+    target_correct_count = max(0, min(stage_number - 1, 3))  # 最大4ステージに変更
     correct_count = target_correct_count
     
     # クイズモードを終了
@@ -136,7 +136,7 @@ def jump_to_stage(stage_number):
     reset_stage_systems()
     
     # メッセージ設定
-    if stage_number == 7:
+    if stage_number == 4:  # 新Final Boss
         incorrect_message = f"Jumped to Stage {stage_number} (Final Boss)!"
     else:
         incorrect_message = f"Jumped to Stage {stage_number}!"
@@ -197,7 +197,7 @@ def update_square_attacks():
     global square_attack_phase, square_spawn_timer, square_rush_timer
     global stage7_question_timer, stage7_question_active
     
-    if correct_count != 6:  # ステージ7のみ
+    if correct_count != 3:  # 新Stage 4のみ
         return
     
     current_time = time.time()
@@ -383,22 +383,20 @@ def draw_game():
     bullet_color_to_use = PROGRAMMING_COLOR
     chaser_color_to_use = ORANGE_COLOR
 
-    if correct_count == 5:
+    if correct_count == 2:  # 新Stage 3 (旧Stage 6): レインボー色
         rainbow_idx_shifter = (rainbow_idx_shifter + 1) % (len(RAINBOW_COLORS) * 3)
         current_rainbow_color = RAINBOW_COLORS[(rainbow_idx_shifter // 3) % len(RAINBOW_COLORS)]
         bullet_color_to_use = current_rainbow_color
         chaser_color_to_use = current_rainbow_color
-    elif correct_count == 4:
+    elif correct_count == 1:  # 新Stage 2 (旧Stage 5): オレンジ色
         bullet_color_to_use = ORANGE_COLOR
-    elif correct_count >= 2:
-        bullet_color_to_use = PINK_COLOR
 
     for bullet_item in bullets:
         text_surface = font.render(bullet_item["text"], True, bullet_color_to_use)
         win.blit(text_surface, (bullet_item["rect"].x, bullet_item["rect"].y - 15))
 
     # 四角形攻撃の描画
-    if correct_count == 6:  # ステージ7
+    if correct_count == 3:  # 新Stage 4 (旧Stage 7): Final Boss
         for attack in square_attacks:
             if attack["phase"] == "positioned":
                 # 配置完了時は黄色で表示
@@ -423,9 +421,9 @@ def draw_game():
     win.blit(stage_text_render, (WIDTH - 140, 50))
 
     if quiz_mode:
-        # Stage 7専用: 問題出題タイミング制御
+        # Stage 4専用: 問題出題タイミング制御
         show_quiz = True
-        if correct_count == 6:  # Stage 7の場合
+        if correct_count == 3:  # Stage 4（Final Boss）の場合
             if stage7_question_timer > 0:  # タイマーが設定されている
                 current_time = time.time()
                 if current_time - stage7_question_timer < stage7_question_delay:
@@ -501,11 +499,11 @@ def handle_quiz_submission():
             stage_str = user_command[5:]  # "admin"の後の部分
             stage_number = int(stage_str)
             
-            if 1 <= stage_number <= 7:  # ステージ1-7の範囲チェック
+            if 1 <= stage_number <= 4:  # ステージ1-4の範囲チェック（4ステージ構成）
                 jump_to_stage(stage_number)
                 return  # 通常の回答処理をスキップ
             else:
-                incorrect_message = "Stage number must be 1-7!"
+                incorrect_message = "Stage number must be 1-4!"
                 incorrect_message_time = time.time()
                 user_input = ""
                 cursor_position = 0
@@ -520,7 +518,7 @@ def handle_quiz_submission():
         user_input = ""
         cursor_position = 0  # カーソル位置もリセット
         correct_count += 1
-        if correct_count == 7:  # 7問正解でゲームクリア
+        if correct_count == 4:  # 4問正解でゲームクリア（新構成）
             current_elapsed_time = time.time() - start_time
             game_clear_screen(current_elapsed_time, correct_count)
 
@@ -529,7 +527,7 @@ def handle_quiz_submission():
         next_quiz_interval = random.uniform(quiz_interval_min, quiz_interval_max)
         
         # ステージ7開始時の初期化
-        if correct_count == 6:
+        if correct_count == 3:  # 新Stage 4でSquare攻撃開始
             # 既存の攻撃をクリア
             reset_stage_systems()
     else:
@@ -599,7 +597,7 @@ while True:
             current_cycle_base_interval *= current_slow_factor
         
         interval_for_top_attacks = current_cycle_base_interval
-        if correct_count == 5:
+        if correct_count >= 2:  # 新Stage 3,4で上攻撃の間隔を2倍に（4方向攻撃がある時）
             interval_for_top_attacks *= 2.0
 
         if time.time() - last_top_attack_time > interval_for_top_attacks:
@@ -615,7 +613,7 @@ while True:
                 "direction": "top"
             })
 
-        if correct_count == 5:
+        if correct_count == 2:  # 新Stage 3のみで4方向攻撃
             interval_for_other_attacks = current_cycle_base_interval
             if time.time() - last_other_attack_time > interval_for_other_attacks:
                 last_other_attack_time = time.time()
@@ -645,13 +643,13 @@ while True:
                     "direction": chosen_direction
                 })
     
-    # ステージ7の四角形攻撃システム
-    if correct_count == 6:
+    # 新Stage 4の四角形攻撃システム
+    if correct_count == 3:
         update_square_attacks()
 
     # --- Bullet Movement and Collision ---
-    # ステージ7では既存の弾システムを停止
-    if correct_count < 6:
+    # 新Stage 4では既存の弾システムを停止
+    if correct_count < 3:
         for bullet in bullets[:]:
             bullet_move_speed = base_bullet_speed
             current_bullet_slow_factor = 1
@@ -690,7 +688,7 @@ while True:
 
     # --- Chaser (Homing Attack) ---
     # ステージ7では追尾攻撃を停止
-    if correct_count >= 3 and correct_count < 6 and chaser is None:
+    if correct_count >= 1 and correct_count < 3 and chaser is None:  # 新Stage 2,3で追跡攻撃
         start_x = max(0, player.x - 100)
         start_y = max(0, player.y - 100)
         chaser_rect = pygame.Rect(start_x, start_y, player.width, player.height)
@@ -712,7 +710,7 @@ while True:
                 game_over_wrapper()
     
     # ステージ7開始時にチェイサーを削除
-    if correct_count == 6 and chaser is not None:
+    if correct_count == 3 and chaser is not None:  # 新Stage 4でchaser停止
         chaser = None
 
     draw_game()
