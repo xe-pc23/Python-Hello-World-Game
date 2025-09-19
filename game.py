@@ -51,6 +51,9 @@ last_other_attack_time = time.time()
 
 correct_count = 0
 
+# ゲーム状態管理
+game_state = "start"  # "start", "playing", "game_over"
+
 incorrect_message = ""
 incorrect_message_time = 0
 incorrect_message_duration = 2
@@ -488,6 +491,37 @@ def game_clear_screen(elapsed_time, final_correct_count):
     pygame.quit()
     sys.exit()
 
+def start_game():
+    """ゲームを開始する際の初期化"""
+    global game_state, start_time, last_quiz_time, next_quiz_interval
+    game_state = "playing"
+    start_time = time.time()
+    last_quiz_time = time.time()
+    next_quiz_interval = random.uniform(quiz_interval_min, quiz_interval_max)
+    reset_stage_systems()
+
+def draw_start_screen():
+    """スタート画面を描画"""
+    win.fill(BLACK)
+    
+    # タイトル
+    title_text = font.render("Python Hello World Game", True, WHITE)
+    win.blit(title_text, (WIDTH//2 - title_text.get_width()//2, HEIGHT//2 - 100))
+    
+    # サブタイトル
+    subtitle_text = font.render("Type 'print(\"Hello World\")' to survive!", True, (200, 200, 200))
+    win.blit(subtitle_text, (WIDTH//2 - subtitle_text.get_width()//2, HEIGHT//2 - 50))
+    
+    # スタート指示
+    start_text = font.render("Press SPACE to Start", True, WHITE)
+    win.blit(start_text, (WIDTH//2 - start_text.get_width()//2, HEIGHT//2 + 50))
+    
+    # 操作説明
+    controls_text = font.render("Controls: WASD or Arrow Keys to move", True, (150, 150, 150))
+    win.blit(controls_text, (WIDTH//2 - controls_text.get_width()//2, HEIGHT//2 + 100))
+    
+    pygame.display.update()
+
 def draw_game():
     global rainbow_idx_shifter, admin_invincible # admin_invincible を参照
     global stage4_question_timer, stage4_question_active  # Stage 4問題出題制御変数
@@ -679,7 +713,14 @@ while True:
         if event.type == pygame.QUIT:
             pygame.quit()
             sys.exit()
-        if quiz_mode and event.type == pygame.KEYDOWN:
+        
+        # スタート画面でのキー処理
+        if game_state == "start" and event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_SPACE:
+                start_game()
+        
+        # ゲーム中のクイズ入力処理
+        elif game_state == "playing" and quiz_mode and event.type == pygame.KEYDOWN:
             if event.key == pygame.K_BACKSPACE:
                 if cursor_position > 0:
                     user_input = user_input[:cursor_position-1] + user_input[cursor_position:]
@@ -704,159 +745,167 @@ while True:
                     # 自動補完機能を適用
                     user_input, cursor_position = handle_auto_complete(event.unicode, user_input, cursor_position)
 
-    keys = pygame.key.get_pressed()
-    # プレイヤー移動：全ステージでクイズ中は移動不可
-    if not quiz_mode:  # クイズ中でない場合のみ移動可能
-        if (keys[pygame.K_LEFT] or keys[pygame.K_a]) and player.left > 0:
-            player.move_ip(-player_speed, 0)
-        if (keys[pygame.K_RIGHT] or keys[pygame.K_d]) and player.right < WIDTH:
-            player.move_ip(player_speed, 0)
-        if (keys[pygame.K_UP] or keys[pygame.K_w]) and player.top > 0:
-            player.move_ip(0, -player_speed)
-        if (keys[pygame.K_DOWN] or keys[pygame.K_s]) and player.bottom < HEIGHT:
-            player.move_ip(0, player_speed)
+    # ゲーム中のみ処理を実行
+    if game_state == "playing":
+        keys = pygame.key.get_pressed()
+        # プレイヤー移動：全ステージでクイズ中は移動不可
+        if not quiz_mode:  # クイズ中でない場合のみ移動可能
+            if (keys[pygame.K_LEFT] or keys[pygame.K_a]) and player.left > 0:
+                player.move_ip(-player_speed, 0)
+            if (keys[pygame.K_RIGHT] or keys[pygame.K_d]) and player.right < WIDTH:
+                player.move_ip(player_speed, 0)
+            if (keys[pygame.K_UP] or keys[pygame.K_w]) and player.top > 0:
+                player.move_ip(0, -player_speed)
+            if (keys[pygame.K_DOWN] or keys[pygame.K_s]) and player.bottom < HEIGHT:
+                player.move_ip(0, player_speed)
 
-    # 通常のクイズモード開始（Stage 4以外）
-    if not quiz_mode and correct_count != 3 and time.time() - last_quiz_time > next_quiz_interval:
-        quiz_mode = True
-        user_input = ""
-        cursor_position = 0  # カーソル位置をリセット
-        incorrect_message = "" # 新しいクイズ開始時にメッセージをクリア
-        # キーイベントバッファをクリア（移動キーの残存を防ぐ）
-        pygame.event.clear(pygame.KEYDOWN)
-    
-    # Stage 4専用のクイズモード制御
-    if correct_count == 3 and stage4_question_active and not quiz_mode:
-        quiz_mode = True
-        user_input = ""
-        cursor_position = 0
-
-    # --- Bullet Generation ---
-    # ステージ7では既存の攻撃を停止
-    if correct_count < 6:
-        current_cycle_base_interval = base_bullet_interval
-        current_slow_factor = 1
-        if quiz_mode:
-            if correct_count <= 1: current_slow_factor = 10
-            elif correct_count <= 3: current_slow_factor = 6
-            else: current_slow_factor = 4
-            current_cycle_base_interval *= current_slow_factor
+        # 通常のクイズモード開始（Stage 4以外）
+        if not quiz_mode and correct_count != 3 and time.time() - last_quiz_time > next_quiz_interval:
+            quiz_mode = True
+            user_input = ""
+            cursor_position = 0  # カーソル位置をリセット
+            incorrect_message = "" # 新しいクイズ開始時にメッセージをクリア
+            # キーイベントバッファをクリア（移動キーの残存を防ぐ）
+            pygame.event.clear(pygame.KEYDOWN)
         
-        interval_for_top_attacks = current_cycle_base_interval
-        if correct_count >= 2:  # 新Stage 3,4で上攻撃の間隔を2倍に（4方向攻撃がある時）
-            interval_for_top_attacks *= 2.0
+        # Stage 4専用のクイズモード制御
+        if correct_count == 3 and stage4_question_active and not quiz_mode:
+            quiz_mode = True
+            user_input = ""
+            cursor_position = 0
 
-        if time.time() - last_top_attack_time > interval_for_top_attacks:
-            last_top_attack_time = time.time()
-            attack_text = random.choice(attack_texts)
-            anchor_x = random.randint(0, WIDTH - 50)
-            anchor_y = 0
-            bullets.append({
-                "rect": pygame.Rect(anchor_x, anchor_y, 1, 1),
-                "text": attack_text,
-                "pos_x_float": float(anchor_x),
-                "pos_y_float": float(anchor_y),
-                "direction": "top"
-            })
+        # --- Bullet Generation ---
+        # ステージ7では既存の攻撃を停止
+        if correct_count < 6:
+            current_cycle_base_interval = base_bullet_interval
+            current_slow_factor = 1
+            if quiz_mode:
+                if correct_count <= 1: current_slow_factor = 10
+                elif correct_count <= 3: current_slow_factor = 6
+                else: current_slow_factor = 4
+                current_cycle_base_interval *= current_slow_factor
+            
+            interval_for_top_attacks = current_cycle_base_interval
+            if correct_count >= 2:  # 新Stage 3,4で上攻撃の間隔を2倍に（4方向攻撃がある時）
+                interval_for_top_attacks *= 2.0
 
-        if correct_count == 2:  # 新Stage 3のみで4方向攻撃
-            interval_for_other_attacks = current_cycle_base_interval
-            if time.time() - last_other_attack_time > interval_for_other_attacks:
-                last_other_attack_time = time.time()
-                chosen_direction = random.choice(['left', 'right', 'bottom'])
+            if time.time() - last_top_attack_time > interval_for_top_attacks:
+                last_top_attack_time = time.time()
                 attack_text = random.choice(attack_texts)
-                
-                temp_surf = font.render(attack_text, True, BLACK)
-                text_w = temp_surf.get_width()
-                text_h = temp_surf.get_height()
-
-                anchor_x, anchor_y = 0, 0
-                if chosen_direction == 'left':
-                    anchor_x = 0 - text_w 
-                    anchor_y = random.randint(15 + text_h, HEIGHT - text_h - 15) 
-                elif chosen_direction == 'right':
-                    anchor_x = WIDTH 
-                    anchor_y = random.randint(15 + text_h, HEIGHT - text_h - 15)
-                elif chosen_direction == 'bottom':
-                    anchor_x = random.randint(0, WIDTH - text_w)
-                    anchor_y = HEIGHT + 15 
-                
+                anchor_x = random.randint(0, WIDTH - 50)
+                anchor_y = 0
                 bullets.append({
                     "rect": pygame.Rect(anchor_x, anchor_y, 1, 1),
                     "text": attack_text,
                     "pos_x_float": float(anchor_x),
                     "pos_y_float": float(anchor_y),
-                    "direction": chosen_direction
+                    "direction": "top"
                 })
-    
-    # 新Stage 4の四角形攻撃システム
-    if correct_count == 3:
-        update_square_attacks()
 
-    # --- Bullet Movement and Collision ---
-    # 新Stage 4では既存の弾システムを停止
-    if correct_count < 3:
-        for bullet in bullets[:]:
-            bullet_move_speed = base_bullet_speed
-            current_bullet_slow_factor = 1
-            if quiz_mode:
-                if correct_count <= 1: current_bullet_slow_factor = 10
-                elif correct_count <= 3: current_bullet_slow_factor = 6
-                else: current_bullet_slow_factor = 4
-                if current_bullet_slow_factor > 0 :
-                     bullet_move_speed /= current_bullet_slow_factor
-            else:
-                bullet_move_speed *= normal_speed_multiplier
+            if correct_count == 2:  # 新Stage 3のみで4方向攻撃
+                interval_for_other_attacks = current_cycle_base_interval
+                if time.time() - last_other_attack_time > interval_for_other_attacks:
+                    last_other_attack_time = time.time()
+                    chosen_direction = random.choice(['left', 'right', 'bottom'])
+                    attack_text = random.choice(attack_texts)
+                    
+                    temp_surf = font.render(attack_text, True, BLACK)
+                    text_w = temp_surf.get_width()
+                    text_h = temp_surf.get_height()
 
-            if bullet['direction'] == 'top':
-                bullet['pos_y_float'] += bullet_move_speed
-            elif bullet['direction'] == 'bottom':
-                bullet['pos_y_float'] -= bullet_move_speed
-            elif bullet['direction'] == 'left':
-                bullet['pos_x_float'] += bullet_move_speed
-            elif bullet['direction'] == 'right':
-                bullet['pos_x_float'] -= bullet_move_speed
+                    anchor_x, anchor_y = 0, 0
+                    if chosen_direction == 'left':
+                        anchor_x = 0 - text_w 
+                        anchor_y = random.randint(15 + text_h, HEIGHT - text_h - 15) 
+                    elif chosen_direction == 'right':
+                        anchor_x = WIDTH 
+                        anchor_y = random.randint(15 + text_h, HEIGHT - text_h - 15)
+                    elif chosen_direction == 'bottom':
+                        anchor_x = random.randint(0, WIDTH - text_w)
+                        anchor_y = HEIGHT + 15 
+                    
+                    bullets.append({
+                        "rect": pygame.Rect(anchor_x, anchor_y, 1, 1),
+                        "text": attack_text,
+                        "pos_x_float": float(anchor_x),
+                        "pos_y_float": float(anchor_y),
+                        "direction": chosen_direction
+                    })
+        
+        # 新Stage 4の四角形攻撃システム
+        if correct_count == 3:
+            update_square_attacks()
 
-            bullet["rect"].x = int(bullet["pos_x_float"])
-            bullet["rect"].y = int(bullet["pos_y_float"])
+        # --- Bullet Movement and Collision ---
+        # 新Stage 4では既存の弾システムを停止
+        if correct_count < 3:
+            for bullet in bullets[:]:
+                bullet_move_speed = base_bullet_speed
+                current_bullet_slow_factor = 1
+                if quiz_mode:
+                    if correct_count <= 1: current_bullet_slow_factor = 10
+                    elif correct_count <= 3: current_bullet_slow_factor = 6
+                    else: current_bullet_slow_factor = 4
+                    if current_bullet_slow_factor > 0 :
+                         bullet_move_speed /= current_bullet_slow_factor
+                else:
+                    bullet_move_speed *= normal_speed_multiplier
 
-            temp_text_surface = font.render(bullet["text"], True, BLACK)
-            text_w = temp_text_surface.get_width()
-            text_h = temp_text_surface.get_height()
-            text_actual_rect = pygame.Rect(bullet["rect"].x, bullet["rect"].y - 15, text_w, text_h)
+                if bullet['direction'] == 'top':
+                    bullet['pos_y_float'] += bullet_move_speed
+                elif bullet['direction'] == 'bottom':
+                    bullet['pos_y_float'] -= bullet_move_speed
+                elif bullet['direction'] == 'left':
+                    bullet['pos_x_float'] += bullet_move_speed
+                elif bullet['direction'] == 'right':
+                    bullet['pos_x_float'] -= bullet_move_speed
 
-            if player.colliderect(text_actual_rect) and not admin_invincible: # 無敵でない場合のみ衝突判定
-                game_over_wrapper()
+                bullet["rect"].x = int(bullet["pos_x_float"])
+                bullet["rect"].y = int(bullet["pos_y_float"])
 
-            if text_actual_rect.right < -50 or text_actual_rect.left > WIDTH + 50 or \
-               text_actual_rect.bottom < -50 or text_actual_rect.top > HEIGHT + 50:
-                bullets.remove(bullet)
+                temp_text_surface = font.render(bullet["text"], True, BLACK)
+                text_w = temp_text_surface.get_width()
+                text_h = temp_text_surface.get_height()
+                text_actual_rect = pygame.Rect(bullet["rect"].x, bullet["rect"].y - 15, text_w, text_h)
 
-    # --- Chaser (Homing Attack) ---
-    # ステージ7では追尾攻撃を停止
-    if correct_count >= 1 and correct_count < 3 and chaser is None:  # 新Stage 2,3で追跡攻撃
-        start_x = max(0, player.x - 100)
-        start_y = max(0, player.y - 100)
-        chaser_rect = pygame.Rect(start_x, start_y, player.width, player.height)
-        chaser = {"rect": chaser_rect, "speed": chaser_speed_base}
+                if player.colliderect(text_actual_rect) and not admin_invincible: # 無敵でない場合のみ衝突判定
+                    game_over_wrapper()
 
-    if chaser is not None and correct_count < 6:
-        if not quiz_mode: # クイズモード中は追尾しない
-            dx = player.centerx - chaser["rect"].centerx
-            dy = player.centery - chaser["rect"].centery
-            dist = max(1, (dx ** 2 + dy ** 2) ** 0.5)
+                if text_actual_rect.right < -50 or text_actual_rect.left > WIDTH + 50 or \
+                   text_actual_rect.bottom < -50 or text_actual_rect.top > HEIGHT + 50:
+                    bullets.remove(bullet)
 
-            move_x = chaser["speed"] * dx / dist
-            move_y = chaser["speed"] * dy / dist
+        # --- Chaser (Homing Attack) ---
+        # ステージ7では追尾攻撃を停止
+        if correct_count >= 1 and correct_count < 3 and chaser is None:  # 新Stage 2,3で追跡攻撃
+            start_x = max(0, player.x - 100)
+            start_y = max(0, player.y - 100)
+            chaser_rect = pygame.Rect(start_x, start_y, player.width, player.height)
+            chaser = {"rect": chaser_rect, "speed": chaser_speed_base}
 
-            chaser["rect"].x += int(move_x)
-            chaser["rect"].y += int(move_y)
+        if chaser is not None and correct_count < 6:
+            if not quiz_mode: # クイズモード中は追尾しない
+                dx = player.centerx - chaser["rect"].centerx
+                dy = player.centery - chaser["rect"].centery
+                dist = max(1, (dx ** 2 + dy ** 2) ** 0.5)
 
-            if chaser["rect"].colliderect(player) and not admin_invincible: # 無敵でない場合のみ衝突判定
-                game_over_wrapper()
-    
-    # ステージ7開始時にチェイサーを削除
-    if correct_count == 3 and chaser is not None:  # 新Stage 4でchaser停止
-        chaser = None
+                move_x = chaser["speed"] * dx / dist
+                move_y = chaser["speed"] * dy / dist
 
-    draw_game()
+                chaser["rect"].x += int(move_x)
+                chaser["rect"].y += int(move_y)
+
+                if chaser["rect"].colliderect(player) and not admin_invincible: # 無敵でない場合のみ衝突判定
+                    game_over_wrapper()
+        
+        # ステージ7開始時にチェイサーを削除
+        if correct_count == 3 and chaser is not None:  # 新Stage 4でchaser停止
+            chaser = None
+
+    # 画面描画の分岐
+    if game_state == "start":
+        draw_start_screen()
+    elif game_state == "playing":
+        draw_game()
+
+    pygame.display.flip()
