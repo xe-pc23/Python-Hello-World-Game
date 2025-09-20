@@ -1,7 +1,21 @@
 # Python Hello World Game
----
+
 ## 概要
 このゲームは弾幕（コードの一部）を避けながら、攻撃として落ちてくる文字列を表した、print("Hello World")を途中で入力しながら最後まで生き延びるゲームです。
+
+## ゲームステージ
+
+### Stage 1
+![Stage 1](stage1.gif)
+
+### Stage 2
+![Stage 2](stage2.gif)
+
+### Stage 3
+![Stage 3](stage3.gif)
+
+### Stage 4
+![Stage 4](stage4.gif)
 
 ---
 ## 始め方
